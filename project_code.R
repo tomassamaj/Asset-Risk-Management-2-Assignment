@@ -6,7 +6,11 @@ all_packages <- c(
   "frenchdata",
   "ggplot2", "scales", "corrplot", "RColorBrewer",
   "tidyquant", "readr",
-  "broom" # Added for tidy regression output
+  "broom", # Added for tidy regression output
+  "patchwork",
+  "lmtest",
+  "sandwich",
+  "gt"
 )
 
 options(repos = "https://cloud.r-project.org")
@@ -178,8 +182,6 @@ p1 <- ggplot(p1_data, aes(x = var_quintile_labeled, y = return, fill = portfolio
   ) +
   theme_minimal()
 
-print(p1)
-
 # Plot 2: Standard Deviation of Returns (Annualized)
 p2_data <- quintile_summary |>
   select(var_quintile_labeled, sd_ret_orig_ann, sd_ret_man_ann) |>
@@ -201,8 +203,6 @@ p2 <- ggplot(p2_data, aes(x = var_quintile_labeled, y = std_dev, fill = portfoli
     fill = "Portfolio"
   ) +
   theme_minimal()
-
-print(p2)
 
 # Plot 3: Ratio E[R]/Var(R)
 p3_data <- quintile_summary |>
@@ -226,8 +226,6 @@ p3 <- ggplot(p3_data, aes(x = var_quintile_labeled, y = ratio, fill = portfolio)
   ) +
   theme_minimal()
 
-print(p3)
-
 # Plot 4: Probability of being in a Recession
 p4 <- ggplot(quintile_summary, aes(x = var_quintile_labeled, y = prob_recession)) +
   geom_bar(stat = "identity", fill = "steelblue") +
@@ -239,21 +237,133 @@ p4 <- ggplot(quintile_summary, aes(x = var_quintile_labeled, y = prob_recession)
   ) +
   theme_minimal()
 
-print(p4)
+# --- Combine all 4 plots using patchwork ---
+# (p1 + p2) creates the top row
+# (p3 + p4) creates the bottom row
+# / combines the rows
+# plot_layout(guides = "collect") creates a single shared legend
+
+combined_plot <- (p1 + p2) / (p3 + p4) + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "bottom") # Place shared legend at the bottom
+
+# Print the combined plot
+print(combined_plot)
+
 
 
 # --- 4.D: Table I (Panel A, Column 1) ---
+# 1. Run the model
 model_table1 <- lm(mkt_excess_managed ~ mkt_excess_orig, 
                    data = factors_vol_managed)
 
-# Get tidy summaries
-model_coeffs <- broom::tidy(model_table1)
+# 2. Get robust coefficients and model statistics
+model_coeffs_robust <- coeftest(model_table1, vcov = vcovHAC(model_table1))
 model_stats <- broom::glance(model_table1)
 
-# Report the required statistics
-cat("\n--- Table I (Panel A, Column 1) ---\n")
-print(model_coeffs)
-print(model_stats)
+# 3. Define the scaling factor
+scaling_factor <- 1200 # Multiply by 12 for annualization and 100 for percentage
+
+# 4. Create the final results table, scaling values "on-the-fly"
+results_table <- tibble(
+  Term = c("Alpha (α)", "MktRF (Slope)"),
+  Estimate = c(
+    model_coeffs_robust[1, "Estimate"] * scaling_factor, # Scale Alpha
+    model_coeffs_robust[2, "Estimate"]                   # No scale for Slope
+  ),
+  StdError = c(
+    model_coeffs_robust[1, "Std. Error"] * scaling_factor, # Scale Alpha SE
+    model_coeffs_robust[2, "Std. Error"]                   # No scale for Slope SE
+  )
+)
+
+# 5. Report all results in one table
+
+# Get scaled values for the table
+alpha_est <- model_coeffs_robust[1, "Estimate"] * scaling_factor
+alpha_se <- model_coeffs_robust[1, "Std. Error"] * scaling_factor
+slope_est <- model_coeffs_robust[2, "Estimate"]
+slope_se <- model_coeffs_robust[2, "Std. Error"]
+rmse <- model_stats$sigma * scaling_factor
+
+# Create a single data.frame for all results
+comparison_df <- tibble(
+  Statistic = c("Alpha (α)", "MktRF (Slope)", "N", "R-squared", "RMSE"),
+  Replicated = c(
+    sprintf("%.2f (%.2f)", alpha_est, alpha_se),
+    sprintf("%.2f (%.2f)", slope_est, slope_se),
+    sprintf("%d", model_stats$nobs),
+    sprintf("%.2f", model_stats$r.squared),
+    sprintf("%.2f", rmse)
+  ),
+  Paper = c(
+    "4.86 (1.56)",
+    "0.61 (0.05)",
+    "1,065",
+    "0.37",
+    "51.39"
+  )
+)
+
+# Build and print the 'gt' table
+comparison_table <- comparison_df %>%
+  gt() %>%
+  tab_header(
+    title = "Table 1 (Panel A, Col 1) Replication",
+    subtitle = "Comparison of Replicated Results vs. Moreira & Muir (2017)"
+  ) %>%
+  cols_label(
+    Statistic = "Statistic",
+    Replicated = "Replicated Results",
+    Paper = "Paper Results"
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = c(Replicated, Paper)
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = Statistic
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_source_note(
+    source_note = "Standard errors are in parentheses. Replicated SEs are Heteroskedasticity-Adjusted (HAC)."
+  ) %>%
+
+  # --- FIX ---
+  # Apply border styling to the source note cell
+  tab_style(
+    style = cell_borders(
+      sides = "top",
+      color = "black",
+      style = "solid",
+      weight = px(2)
+    ),
+    locations = cells_source_notes()
+  ) %>%
+  # --- END FIX ---
+  
+  opt_table_lines("none") %>% # Clean look
+  opt_table_outline(style = "solid", width = px(2)) %>%
+  
+  # --- Corrected tab_options() ---
+  tab_options(
+    table.border.top.color = "black",
+    table.border.bottom.color = "black",
+    heading.border.bottom.style = "solid",
+    heading.border.bottom.width = px(2),
+    heading.border.bottom.color = "black",
+    column_labels.border.bottom.style = "solid",
+    column_labels.border.bottom.width = px(2),
+    column_labels.border.bottom.color = "black"
+    # The source_notes... arguments have been removed
+  )
+
+# Print the final table
+print(comparison_table)
 
 
 
