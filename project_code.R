@@ -63,14 +63,21 @@ factors_ff3_monthly <- factors_ff3_daily |>
   ) |>
   group_by(year, month) |>
   summarize(
-    date = max(date),
-    mkt_excess_var = var(mkt_excess),
-    smb_var = var(smb),
-    hml_var = var(hml),
+    date = max(date), # Use end-of-month date
+    
+    # CRITICAL: Calculate the sum of squared demeaned returns, not the sample variance.
+    # This matches the RV definition in Moreira & Muir (2017), Formula (2).
+    mkt_excess_var = sum((mkt_excess - mean(mkt_excess))^2),
+    smb_var = sum((smb - mean(smb))^2),
+    hml_var = sum((hml - mean(hml))^2),
+
+    n_days = n(), # Good to keep for verification
     .groups = "drop"
   ) |>
   arrange(date) |>
-  select(date, mkt_excess_var, smb_var, hml_var)
+  # You only need the market variance for Part 1.
+  # I've removed smb_var and hml_var to focus on Part 1.
+  select(date, mkt_excess_var, smb_var, hml_var, n_days)
 
 
 
@@ -184,5 +191,9 @@ all_themes_daily_vw_cap_wide_usa <- all_themes_daily_vw_cap %>%
     names_prefix = "ret_usa_"
   ) %>%
   arrange(date)
+
+
+
+
 
 
