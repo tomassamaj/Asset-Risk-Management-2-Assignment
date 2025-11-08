@@ -474,3 +474,269 @@ all_themes_daily_vw_cap_wide_usa <- all_themes_daily_vw_cap %>%
 
 
 
+
+
+
+
+
+
+
+library(tidyquant)
+library(zoo)
+library(lubridate)
+library(dplyr)
+library(tidyverse)
+
+
+# --- Part 2: Setup ---
+# 1. Define your parameters
+# !! Replace with your own student ID digits !!
+digit_7 <- 2
+digit_8 <- 6
+D <- digit_7 + digit_8 + 10
+print(paste("Using D =", D))
+
+FACTOR_NAME <- "Momentum" # !! Replace with your chosen factor !!
+FACTOR_COL_NAME <- paste0("ret_usa_", FACTOR_NAME)
+
+# 2. Update end date and load full Fama-French daily data
+start_date_ext <- ymd("1926-07-01")
+end_date_ext <- ymd("2025-07-31") # As per assignment 
+
+# (Assuming 'factors_ff3_daily_raw' is already loaded)
+mkt_daily_ext <- factors_ff3_daily_raw$subsets$data[[1]] |>
+  mutate(
+    date = ymd(date),
+    mkt_excess = as.numeric(`Mkt-RF`) / 100
+  ) |>
+  select(date, mkt_excess) |>
+  filter(date >= start_date_ext & date <= end_date_ext)
+
+# (Assuming 'all_themes_daily_vw_cap_wide_usa' is loaded and has the factor)
+# Ensure the column name exists
+if (!FACTOR_COL_NAME %in% names(all_themes_daily_vw_cap_wide_usa)) {
+  stop(paste("Factor column", FACTOR_COL_NAME, "not found. Did you pick a valid factor?"))
+}
+
+factor_daily_ext <- all_themes_daily_vw_cap_wide_usa |>
+  select(date, all_of(FACTOR_COL_NAME)) |>
+  rename(factor_excess = !!FACTOR_COL_NAME) |>
+  filter(date >= start_date_ext & date <= end_date_ext)
+
+# 3. Join Mkt and Factor daily data
+daily_data <- inner_join(mkt_daily_ext, factor_daily_ext, by = "date")
+
+# --- Part 2: Step 1 ---
+# 4. Calculate D-day rolling variance
+# We use the tidyquant::tq_mutate wrapper for zoo::rollapply
+# The formula is: (D/22) * variance
+# Note: var(x) = sum((x - mean(x))^2) / (n-1). The assignment formula is sum(...),
+# which is (n-1)*var(x). So we calculate rolling variance and multiply by (D-1)*(D/22).
+# Let's re-read the formula :
+# sigma_t^2 = (D/22) * SUM( (f_d - f_bar)^2 ) from d=1 to D
+# The sum part is (D-1) * var(f).
+# So the formula is: (D/22) * (D-1) * roll_var(f, D)
+
+daily_data_with_var <- daily_data |>
+  tq_mutate(
+    select = mkt_excess,
+    mutate_fun = rollapply,
+    width = D,
+    FUN = var, # Calculate rolling variance
+    align = "right",
+    fill = NA,
+    col_rename = "mkt_roll_var_base"
+  ) |>
+  tq_mutate(
+    select = factor_excess,
+    mutate_fun = rollapply,
+    width = D,
+    FUN = var,
+    align = "right",
+    fill = NA,
+    col_rename = "factor_roll_var_base"
+  ) |>
+  mutate(
+    # Apply the assignment's scaling formula 
+    mkt_d_day_var = (D / 22) * (D - 1) * mkt_roll_var_base,
+    factor_d_day_var = (D / 22) * (D - 1) * factor_roll_var_base
+  ) |>
+  filter(!is.na(mkt_d_day_var)) # Remove initial NA rows
+
+# 5. Get end-of-month variance to match with next month's return
+variance_monthly_lag <- daily_data_with_var |>
+  mutate(year_month = floor_date(date, "month")) |>
+  group_by(year_month) |>
+  summarize(
+    # Get the *last* D-day variance from that month
+    mkt_var_lag = last(mkt_d_day_var),
+    factor_var_lag = last(factor_d_day_var)
+  ) |>
+  mutate(
+    # This variance from month 't' will be used for month 't+1' returns
+    date = year_month + months(1)
+  ) |>
+  select(date, mkt_var_lag, factor_var_lag)
+
+
+
+
+
+
+
+# 1. Load MONTHLY Mkt returns (from daily FF data)
+mkt_monthly_ext <- mkt_daily_ext |>
+  mutate(
+    rf = factors_ff3_daily$rf[match(date, factors_ff3_daily$date)], # Get matching RF
+    mkt_return = mkt_excess + rf
+  ) |>
+  group_by(year_month = floor_date(date, "month")) |>
+  summarize(
+    date = max(date),
+    mkt_return_comp = prod(1 + mkt_return) - 1,
+    rf_comp = prod(1 + rf) - 1,
+    mkt_excess_orig = mkt_return_comp - rf_comp
+  ) |>
+  select(date, mkt_excess_orig)
+
+# 2. Load MONTHLY Factor returns
+# (Assuming 'all_themes_monthly_vw_cap_wide_usa' is loaded)
+factor_monthly_ext <- all_themes_monthly_vw_cap_wide_usa |>
+  select(date, all_of(FACTOR_COL_NAME)) |>
+  rename(factor_excess_orig = !!FACTOR_COL_NAME) |>
+  # JKP data is already excess return, no need to subtract RF
+  filter(date >= start_date_ext & date <= end_date_ext)
+
+# 3. Combine monthly returns and lagged variance
+portfolios_unscaled <- inner_join(
+  mkt_monthly_ext,
+  factor_monthly_ext,
+  by = "date"
+) |>
+  inner_join(
+    variance_monthly_lag,
+    by = "date"
+  ) |>
+  mutate(
+    # Create unscaled returns 
+    mkt_excess_unscaled = mkt_excess_orig / mkt_var_lag,
+    factor_excess_unscaled = factor_excess_orig / factor_var_lag
+  ) |>
+  filter(
+    !is.na(mkt_excess_unscaled) & !is.na(factor_excess_unscaled) &
+      !is.infinite(mkt_excess_unscaled) & !is.infinite(factor_excess_unscaled)
+  )
+
+# 4. Calculate scaling constants 'c' 
+c_mkt <- sd(portfolios_unscaled$mkt_excess_orig) / sd(portfolios_unscaled$mkt_excess_unscaled)
+c_factor <- sd(portfolios_unscaled$factor_excess_orig) / sd(portfolios_unscaled$factor_excess_unscaled)
+
+# 5. Create final scaled portfolios
+portfolios_final <- portfolios_unscaled |>
+  mutate(
+    mkt_excess_managed = c_mkt * mkt_excess_unscaled,
+    factor_excess_managed = c_factor * factor_excess_unscaled
+  )
+
+print("--- Part 2: Portfolio Scaling Verification ---")
+print(paste("Market Scaling 'c':", round(c_mkt, 4)))
+print(paste("Original Mkt SD:", round(sd(portfolios_final$mkt_excess_orig), 6)))
+print(paste("Managed Mkt SD: ", round(sd(portfolios_final$mkt_excess_managed), 6)))
+print(paste("Factor Scaling 'c':", round(c_factor, 4)))
+print(paste("Original Factor SD:", round(sd(portfolios_final$factor_excess_orig), 6)))
+print(paste("Managed Factor SD: ", round(sd(portfolios_final$factor_excess_managed), 6)))
+
+
+
+
+
+# 1. Convert our data to XTS objects for PerformanceAnalytics
+portfolios_xts <- portfolios_final |>
+  select(
+    date,
+    mkt_excess_orig, mkt_excess_managed,
+    factor_excess_orig, factor_excess_managed
+  ) |>
+  tq_transmute(select = -date, mutate_fun = to.xts)
+
+# 2. Calculate Sharpe Ratios and Max Drawdowns
+sharpe_ratios <- SharpeRatio.annualized(portfolios_xts, scale = 12)
+max_drawdowns <- maxDrawdown(portfolios_xts)
+
+# 3. Run regressions for Alphas
+# We use coeftest for robust (HAC) standard errors
+model_capm_orig <- lm(mkt_excess_orig ~ mkt_excess_orig, data = portfolios_final) # Just for consistency, alpha is 0
+model_capm_man <- lm(mkt_excess_managed ~ mkt_excess_orig, data = portfolios_final)
+model_capm_factor_orig <- lm(factor_excess_orig ~ mkt_excess_orig, data = portfolios_final)
+model_capm_factor_man <- lm(factor_excess_managed ~ mkt_excess_orig, data = portfolios_final)
+
+model_rel_mkt <- lm(mkt_excess_managed ~ mkt_excess_orig, data = portfolios_final)
+model_rel_factor <- lm(factor_excess_managed ~ factor_excess_orig, data = portfolios_final)
+
+# Helper function to extract annualized % alpha and t-stat
+get_alpha_stats <- function(model) {
+  robust_test <- coeftest(model, vcov = vcovHAC(model))
+  alpha_monthly_frac <- robust_test[1, "Estimate"]
+  se_monthly_frac <- robust_test[1, "Std. Error"]
+  
+  alpha_ann_pct <- alpha_monthly_frac * 12 * 100
+  se_ann_pct <- se_monthly_frac * 12 * 100
+  t_stat <- robust_test[1, "t value"]
+  
+  return(
+    sprintf("%.2f%% (t=%.2f)", alpha_ann_pct, t_stat)
+  )
+}
+
+# 4. Assemble the final results table
+results_summary <- tibble(
+  Portfolio = c(
+    "Market (Original)", "Market (Managed)",
+    paste(FACTOR_NAME, "(Original)"), paste(FACTOR_NAME, "(Managed)")
+  ),
+  `Annualized Sharpe Ratio` = c(
+    sharpe_ratios["mkt_excess_orig"], sharpe_ratios["mkt_excess_managed"],
+    sharpe_ratios["factor_excess_orig"], sharpe_ratios["factor_excess_managed"]
+  ),
+  `Max Drawdown` = c(
+    max_drawdowns["mkt_excess_orig"], max_drawdowns["mkt_excess_managed"],
+    max_drawdowns["factor_excess_orig"], max_drawdowns["factor_excess_managed"]
+  ),
+  `CAPM Alpha (vs Mkt)` = c(
+    "0.00% (t=0.00)", # By definition
+    get_alpha_stats(model_capm_man),
+    get_alpha_stats(model_capm_factor_orig),
+    get_alpha_stats(model_capm_factor_man)
+  ),
+  `Alpha (vs Original)` = c(
+    "---",
+    get_alpha_stats(model_rel_mkt),
+    "---",
+    get_alpha_stats(model_rel_factor)
+  )
+)
+
+# 5. Print the table using 'gt' for professional presentation
+final_table <- results_summary |>
+  mutate(
+    `Annualized Sharpe Ratio` = round(as.numeric(`Annualized Sharpe Ratio`), 3),
+    `Max Drawdown` = scales::percent(`Max Drawdown`, accuracy = 0.01)
+  ) |>
+  gt() |>
+  tab_header(
+    title = "Part 2: Volatility-Managed Portfolio Performance",
+    subtitle = paste("Market vs.", FACTOR_NAME, "| D =", D, "days")
+  ) |>
+  cols_align(align = "center", columns = -Portfolio) |>
+  cols_label(
+    `Annualized Sharpe Ratio` = "Annual. Sharpe",
+    `Max Drawdown` = "Max Drawdown",
+    `CAPM Alpha (vs Mkt)` = "CAPM Alpha",
+    `Alpha (vs Original)` = "Alpha vs. Original"
+  ) |>
+  tab_source_note(
+    source_note = "Alphas are annualized (monthly alpha * 12) and in percent. t-statistics are from HAC robust standard errors."
+  ) |>
+  opt_table_outline()
+
+print(final_table)
