@@ -6,7 +6,7 @@ all_packages <- c(
   "frenchdata",
   "ggplot2", "scales", "corrplot", "RColorBrewer",
   "tidyquant", "readr",
-  "broom", # Added for tidy regression output
+  "broom",
   "patchwork",
   "lmtest",
   "sandwich",
