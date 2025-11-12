@@ -597,7 +597,6 @@ mkt_monthly_ext <- mkt_daily_ext |>
   select(date, mkt_excess_orig)
 
 # 2. Load MONTHLY Factor returns
-# *** THIS BLOCK IS NOW CORRECTED ***
 factor_monthly_ext <- all_themes_monthly_vw_cap_wide_usa |>
   select(date, all_of(FACTOR_COL_NAME)) |>
   rename(factor_excess_orig = !!FACTOR_COL_NAME) |>
