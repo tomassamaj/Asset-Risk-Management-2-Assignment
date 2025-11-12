@@ -257,7 +257,7 @@ print(figure_1_replication)
 # This is the *comparison* plot block (Original vs. Managed)
 
 # Define the custom colors
-my_colors <- c("Original" = "darkblue", "Managed" = "#80bef1")
+my_colors <- c("Managed" = "#80bef1", "Original" = "darkblue")
 
 # Plot 1: Average Monthly Return (Annualized)
 p1_data <- quintile_summary |>
@@ -899,6 +899,10 @@ density_data_p1 <- factors_vol_managed %>%
 density_plot_p1 <- ggplot(density_data_p1, 
                           aes(x = returns, fill = portfolio_type)) +
   geom_density(alpha = 0.5) +
+  
+  # --- ADD THIS LINE to apply your custom colors ---
+  scale_fill_manual(values = my_colors) +
+  
   scale_x_continuous(
     labels = scales::percent_format(),
     limits = c(-0.3, 0.3) # Zoom in to see the main distribution
@@ -943,8 +947,13 @@ density_data_p2 <- portfolios_final %>%
 density_plot_p2 <- ggplot(density_data_p2, 
                           aes(x = returns, fill = Type)) +
   geom_density(alpha = 0.5) +
+  
   # Use facets to create separate plots for Market and Factor
   facet_wrap(~ Portfolio, scales = "free") + 
+  
+  # --- ADD THIS LINE to apply your custom colors ---
+  scale_fill_manual(values = my_colors) +
+  
   scale_x_continuous(labels = scales::percent_format()) +
   labs(
     title = "Part 2: Return Distributions (Extended Sample)",
@@ -957,3 +966,4 @@ density_plot_p2 <- ggplot(density_data_p2,
   theme(legend.position = "bottom")
 
 print(density_plot_p2)
+
