@@ -1,5 +1,6 @@
 # --- 1. Load All Necessary Packages ---
 
+# List all the packages we'll need for data wrangling, plotting, and analysis
 all_packages <- c(
   "dplyr", "tidyr", "lubridate", "stringr",
   "rstudioapi",
@@ -13,28 +14,41 @@ all_packages <- c(
   "gt"
 )
 
+# Set the CRAN mirror
 options(repos = "https://cloud.r-project.org")
 
+# Check if each package is installed, and if not, install it.
+# This makes the script portable and easy to run on any machine.
 installed <- rownames(installed.packages())
 for(pkg in all_packages) {
   if(! pkg %in% installed) install.packages(pkg)
 }
 
+# Load all packages in the list. 'invisible' just suppresses the console messages.
 invisible(lapply(all_packages, library, character.only = TRUE))
 
 # --- 2. Set Working Directory ---
-# current_path <- getActiveDocumentContext()$path
-# setwd(dirname(current_path))
-# print(getwd())
+# A good practice is to set the working directory to where the script is.
+# Note: It requires RStudio's API.
+current_path <- getActiveDocumentContext()$path
+setwd(dirname(current_path))
+print(getwd())
 
 ############################ PART 1.  ##########################################
 
 # --- 3. Load and Prepare Fama-French Data ---
+# Set the date range for the Part 1 replication, as per the assignment.
 start_date <- ymd("1926-01-01") 
 end_date <- ymd("2015-12-31")   
 
+# Download the daily Fama-French 3-factor data
 factors_ff3_daily_raw <- download_french_data("Fama/French 3 Factors [Daily]")
 
+# Clean up the downloaded daily data:
+# 1. Convert the date column to a proper date format.
+# 2. Scale returns from percentages (e.g., 1.5) to decimals (e.g., 0.015).
+# 3. Rename columns to be more R-friendly (e.g., 'mkt_excess').
+# 4. Filter for our Part 1 date range.
 factors_ff3_daily <- factors_ff3_daily_raw$subsets$data[[1]] |>
   mutate(
     date = ymd(date),
@@ -47,31 +61,35 @@ factors_ff3_daily <- factors_ff3_daily_raw$subsets$data[[1]] |>
 
 
 ### STEPS 1 & 2a (Combined): Calculate Monthly Returns and Variance ###
-# Combine Step 1 (Variance) and Step 2a (Returns) into one operation
-# to avoid grouping by month twice.
-
+# This is a big, efficient step. We're doing two things at once:
+# 1. Calculate monthly variance (Step 1) from the daily data.
+# 2. Compound the daily returns to get the official monthly return (Step 2a).
 data_monthly <- factors_ff3_daily |>
   mutate(
-    year_month = floor_date(date, "month"),
-    mkt_return_daily = mkt_excess + rf
+    year_month = floor_date(date, "month"), # Create a helper column for grouping
+    mkt_return_daily = mkt_excess + rf      # We need total return (not excess) for compounding
   ) |>
   group_by(year_month) |>
   summarize(
-    date = max(date), # Use end-of-month date
+    date = max(date), # Use end-of-month date as the identifier for this summary
     
     # --- From Step 1 ---
-    # !!! MODIFICATION AS REQUESTED !!!
-    # Changed from sum((...)^2) to simple var()
+    # !!! EXPERIMENT AS REQUESTED !!!
+    # This is the "simple variance" method. We're calculating the
+    # simple variance of daily excess returns for the whole month.
     mkt_excess_var = var(mkt_excess, na.rm = TRUE),
     smb_var = var(smb, na.rm = TRUE),
     hml_var = var(hml, na.rm = TRUE),
-    # !!! END MODIFICATION !!!
+    # !!! END EXPERIMENT !!!
     
-    n_days = n(),
+    n_days = n(), # Count the number of trading days
     
     # --- From Step 2a ---
+    # Compound the daily total returns to get the true monthly total return
     mkt_return_comp = prod(1 + mkt_return_daily) - 1,
+    # Compound the daily risk-free rates
     rf_comp = prod(1 + rf) - 1,
+    # Our "original" excess return is the difference
     mkt_excess_orig = mkt_return_comp - rf_comp,
     
     .groups = "drop"
@@ -83,35 +101,40 @@ data_monthly <- factors_ff3_daily |>
 
 ### STEPS 2b, 2c, 2d: Construct the Volatility-Managed Portfolio ###
 
-# Create the lagged variance and unscaled return
+# Lag the variance. We need month t's variance to make our trade in month t+1.
 data_unscaled <- data_monthly |>
   mutate(
     mkt_excess_var_lag = lag(mkt_excess_var)
   ) |>
-  filter(!is.na(mkt_excess_var_lag)) |>
+  filter(!is.na(mkt_excess_var_lag)) |> # Drop the first month (no lag data)
   mutate(
+    # This is the "unscaled" portfolio from the paper: return / lagged_variance
     mkt_excess_unscaled = mkt_excess_orig / mkt_excess_var_lag
   )
 
 # Calculate the scaling constant 'c'
+# c = vol(original portfolio) / vol(unscaled portfolio)
 c_scalar <- sd(data_unscaled$mkt_excess_orig) / sd(data_unscaled$mkt_excess_unscaled)
 
-# Apply the scaling
+# Apply the scaling to get the final managed portfolio returns
 factors_vol_managed <- data_unscaled |>
   mutate(
     mkt_excess_managed = c_scalar * mkt_excess_unscaled
   )
 
 # --- Verification ---
+# Check our work. The two SDs should be identical.
 print(paste("Scaling constant 'c':", round(c_scalar, 6)))
 print(paste("Original Portfolio SD:", round(sd(factors_vol_managed$mkt_excess_orig), 6)))
 print(paste("Managed Portfolio SD: ", round(sd(factors_vol_managed$mkt_excess_managed), 6)))
 
 
 ### STEP 3: Sort Months into Variance Quintiles ###
+# Group all months into 5 buckets (quintiles) based on their lagged variance
 factors_vol_managed <- factors_vol_managed |>
   mutate(
     var_quintile = ntile(mkt_excess_var_lag, 5),
+    # Create nice labels for the plots
     var_quintile_labeled = factor(
       var_quintile,
       levels = 1:5,
@@ -128,28 +151,33 @@ print(table(factors_vol_managed$var_quintile_labeled))
 ### STEP 4: Reproduce Figures and Tables ###
 
 # --- 4.A: Load NBER Recession Data ---
+# Load the local USREC.csv file for recession shading
 nber_data_raw <- read_csv("USREC.csv")
 
+# Clean up the NBER data
 nber_data <- nber_data_raw %>%
   mutate(
     date = ymd(observation_date), 
-    date_join = floor_date(date, "month"), 
+    date_join = floor_date(date, "month"), # Create a key for joining
     us_recession = as.numeric(USREC) 
   ) %>%
   select(date_join, us_recession)
 
+# Add the recession indicator to our main data frame
 factors_vol_managed <- factors_vol_managed %>%
   mutate(
-    date_join = floor_date(date, "month")
+    date_join = floor_date(date, "month") # Create the matching key
   ) %>%
   left_join(nber_data, by = "date_join") %>%
-  select(-date_join)
+  select(-date_join) # Clean up
 
 
 # --- 4.B: Summary Statistics for Plots ---
+# Calculate all the stats needed for the Figure 1 plots
 quintile_summary <- factors_vol_managed |>
   group_by(var_quintile_labeled) |>
   summarize(
+    # Note: We calculate stats for both Original and Managed
     mean_ret_orig_ann = mean(mkt_excess_orig) * 12,
     mean_ret_man_ann = mean(mkt_excess_managed) * 12,
     sd_ret_orig_ann = sd(mkt_excess_orig) * sqrt(12),
@@ -224,9 +252,8 @@ figure_1_replication <- (p1_orig + p2_orig) / (p3_orig + p4_orig)
 print(figure_1_replication)
 
 
-
-
-# --- 4.C: Create Bar Charts ---
+# --- 4.C: Create Bar Charts (Comparison) ---
+# This is the *comparison* plot block (Original vs. Managed)
 
 # Plot 1: Average Monthly Return (Annualized)
 p1_data <- quintile_summary |>
@@ -324,18 +351,19 @@ print(combined_plot)
 
 
 # --- 4.D: Table I (Panel A, Column 1) ---
-# 1. Run the model
+# 1. Run the model: managed_return = alpha + beta * original_return
 model_table1 <- lm(mkt_excess_managed ~ mkt_excess_orig, 
                    data = factors_vol_managed)
 
-# 2. Get robust coefficients and model statistics
+# 2. Get robust (HAC) coefficients and model statistics
 model_coeffs_robust <- coeftest(model_table1, vcov = vcovHAC(model_table1))
 model_stats <- broom::glance(model_table1)
 
-# 3. Define the scaling factor
-scaling_factor <- 1200 # Multiply by 12 for annualization and 100 for percentage
+# 3. Define the scaling factor (12 months * 100 for percent)
+scaling_factor <- 1200 
 
 # 4. Create the final results table, scaling values "on-the-fly"
+# This is just for internal check, the 'gt' table is the final output
 results_table <- tibble(
   Term = c("Alpha (α)", "MktRF (Slope)"),
   Estimate = c(
@@ -355,9 +383,9 @@ alpha_est <- model_coeffs_robust[1, "Estimate"] * scaling_factor
 alpha_se <- model_coeffs_robust[1, "Std. Error"] * scaling_factor
 slope_est <- model_coeffs_robust[2, "Estimate"]
 slope_se <- model_coeffs_robust[2, "Std. Error"]
-rmse <- model_stats$sigma * scaling_factor
+rmse <- model_stats$sigma * scaling_factor # RMSE also needs scaling
 
-# Create a single data.frame for all results
+# Create a single data.frame to compare our results to the paper's
 comparison_df <- tibble(
   Statistic = c("Alpha (α)", "MktRF (Slope)", "N", "R-squared", "RMSE"),
   Replicated = c(
@@ -376,7 +404,7 @@ comparison_df <- tibble(
   )
 )
 
-# Build and print the 'gt' table
+# Build and print the 'gt' table for a professional look
 comparison_table <- comparison_df %>%
   gt() %>%
   tab_header(
@@ -404,8 +432,7 @@ comparison_table <- comparison_df %>%
     source_note = "Standard errors are in parentheses. Replicated SEs are Heteroskedasticity-Adjusted (HAC)."
   ) %>%
   
-  # --- FIX ---
-  # Apply border styling to the source note cell
+  # Add a top border to the source note
   tab_style(
     style = cell_borders(
       sides = "top",
@@ -415,12 +442,11 @@ comparison_table <- comparison_df %>%
     ),
     locations = cells_source_notes()
   ) %>%
-  # --- END FIX ---
   
   opt_table_lines("none") %>% # Clean look
   opt_table_outline(style = "solid", width = px(2)) %>%
   
-  # --- Corrected tab_options() ---
+  # Manually set the border styles
   tab_options(
     table.border.top.color = "black",
     table.border.bottom.color = "black",
@@ -430,7 +456,6 @@ comparison_table <- comparison_df %>%
     column_labels.border.bottom.style = "solid",
     column_labels.border.bottom.width = px(2),
     column_labels.border.bottom.color = "black"
-    # The source_notes... arguments have been removed
   )
 
 # Print the final table
@@ -441,6 +466,7 @@ cat("\nGenerating scatter plot for Part 1...\n")
 
 scatter_p1 <- ggplot(factors_vol_managed, aes(x = mkt_excess_orig, y = mkt_excess_managed)) +
   geom_point(alpha = 0.2, color = "blue") +
+  # Add the 45-degree (y=x) line for reference
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
   labs(
     title = "Part 1: Managed Market vs. Original Market Returns (1926-2015)",
@@ -514,7 +540,7 @@ load("data.RData")
 # types of locations in location column in the data:
 unique(all_themes_monthly_vw_cap$location)
 
-
+# --- USER INSTRUCTION: Filtering for 'usa' as requested ---
 all_themes_monthly_vw_cap_wide_usa <- all_themes_monthly_vw_cap %>%
   mutate(date = ymd(date)) %>%
   filter(
@@ -535,7 +561,7 @@ all_themes_monthly_vw_cap_wide_usa <- all_themes_monthly_vw_cap %>%
 # types of locations in location column in the data:
 unique(all_themes_daily_vw_cap$location)
 
-
+# --- USER INSTRUCTION: Filtering for 'usa' as requested ---
 all_themes_daily_vw_cap_wide_usa <- all_themes_daily_vw_cap %>%
   mutate(date = ymd(date)) %>%
   filter(
@@ -551,28 +577,8 @@ all_themes_daily_vw_cap_wide_usa <- all_themes_daily_vw_cap %>%
   ) %>%
   arrange(date)
 
-
-
-
-
-
-
-
-
-
-
-
-
-library(tidyquant)
-library(zoo)
-library(lubridate)
-library(dplyr)
-library(tidyverse)
-
-
 # --- Part 2: Setup ---
-# 1. Define your parameters
-# !! Replace with your own student ID digits !!
+# 1. Define your parameters based on your student ID
 digit_7 <- 2
 digit_8 <- 6
 D <- digit_7 + digit_8 + 10
@@ -585,17 +591,18 @@ FACTOR_COL_NAME <- paste0("ret_usa_", FACTOR_NAME)
 start_date_ext <- ymd("1926-07-01")
 end_date_ext <- ymd("2025-07-31") # As per assignment 
 
-# (Assuming 'factors_ff3_daily_raw' is already loaded)
+# Get the full-sample daily market data
 mkt_daily_ext <- factors_ff3_daily_raw_part_2$subsets$data[[1]] |>
   mutate(
     date = ymd(date),
-    mkt_excess = as.numeric(`Mkt-RF`) / 100
+    mkt_excess = as.numeric(`Mkt-RF`) / 100,
+    rf = as.numeric(RF) / 100 # Keep RF for later
   ) |>
-  select(date, mkt_excess) |>
+  select(date, mkt_excess, rf) |>
   filter(date >= start_date_ext & date <= end_date_ext)
 
-# (Assuming 'all_themes_daily_vw_cap_wide_usa' is loaded and has the factor)
-# Ensure the column name exists
+# Get the daily factor data
+# Ensure the column name exists in the 'usa' filtered data
 if (!FACTOR_COL_NAME %in% names(all_themes_daily_vw_cap_wide_usa)) {
   stop(paste("Factor column", FACTOR_COL_NAME, "not found. Did you pick a valid factor?"))
 }
@@ -611,8 +618,8 @@ daily_data <- inner_join(mkt_daily_ext, factor_daily_ext, by = "date")
 # --- Part 2: Step 1 ---
 # 4. Calculate D-day rolling variance
 # We use the tidyquant::tq_mutate wrapper for zoo::rollapply
-
 daily_data_with_var <- daily_data |>
+  arrange(date) |> # Make sure data is sorted for rolling functions
   tq_mutate(
     select = mkt_excess,
     mutate_fun = rollapply,
@@ -648,7 +655,8 @@ variance_monthly_lag <- daily_data_with_var |>
   summarize(
     # Get the *last* D-day variance from that month
     mkt_var_lag = last(mkt_d_day_var),
-    factor_var_lag = last(factor_d_day_var)
+    factor_var_lag = last(factor_d_day_var),
+    .groups = "drop"
   ) |>
   mutate(
     # This variance from month 't' will be used for month 't+1' returns
@@ -657,40 +665,33 @@ variance_monthly_lag <- daily_data_with_var |>
   select(date, mkt_var_lag, factor_var_lag)
 
 
-
-
-
-# 1. Load MONTHLY Mkt returns (from daily FF data)
-# *** THIS BLOCK IS NOW CORRECTED ***
-mkt_monthly_ext <- mkt_daily_ext |>
+# --- Part 2: Step 2 ---
+# 1. Load MONTHLY Mkt returns (compounded from daily data)
+mkt_monthly_ext <- daily_data |>
   mutate(
-    rf = factors_ff3_daily_part_2$rf[match(date, factors_ff3_daily_part_2$date)], # Get matching RF
-    mkt_return = mkt_excess + rf
+    mkt_return = mkt_excess + rf # Use the RF we joined earlier
   ) |>
   group_by(year_month = floor_date(date, "month")) |> # Group by month
   summarize(
-    # date = max(date), # We no longer want the max date
     mkt_return_comp = prod(1 + mkt_return) - 1,
     rf_comp = prod(1 + rf) - 1,
-    mkt_excess_orig = mkt_return_comp - rf_comp
+    mkt_excess_orig = mkt_return_comp - rf_comp,
+    .groups = "drop"
   ) |>
   rename(date = year_month) |> # Use the start-of-month as the key
   select(date, mkt_excess_orig)
 
 # 2. Load MONTHLY Factor returns
-# *** THIS BLOCK IS NOW CORRECTED ***
 factor_monthly_ext <- all_themes_monthly_vw_cap_wide_usa |>
   select(date, all_of(FACTOR_COL_NAME)) |>
   rename(factor_excess_orig = !!FACTOR_COL_NAME) |>
   filter(date >= start_date_ext & date <= end_date_ext) |>
   # JKP data is end-of-month, so we floor it to the start-of-month
-  # This creates the matching key (e.g., 2025-02-01)
   mutate(date = floor_date(date, "month")) |> 
   select(date, factor_excess_orig)
 
 # 3. Combine monthly returns and lagged variance
-# This 'inner_join' will now work, as both 'date' columns
-# use the first day of the month (e.g., 2025-02-01)
+# This 'inner_join' will join by the start-of-month date
 portfolios_unscaled <- inner_join(
   mkt_monthly_ext,
   factor_monthly_ext,
@@ -733,11 +734,9 @@ print(paste("Managed Factor SD: ", round(sd(portfolios_final$factor_excess_manag
 
 
 
-# --- Part 2: Step 3 (Corrected) ---
+# --- Part 2: Step 3 (Calculate Metrics) ---
 
 # 1. Convert our data to XTS objects for PerformanceAnalytics
-# We will use the xts() function directly.
-# First, create the numeric data matrix (all columns except date)
 portfolios_matrix <- portfolios_final |>
   select(
     mkt_excess_orig, mkt_excess_managed,
@@ -745,10 +744,7 @@ portfolios_matrix <- portfolios_final |>
   ) |>
   as.matrix()
 
-# Second, get the date vector
 portfolios_dates <- portfolios_final$date
-
-# Third, create the XTS object
 portfolios_xts <- xts::xts(portfolios_matrix, order.by = portfolios_dates)
 
 # --- Verification ---
@@ -756,13 +752,11 @@ print("Successfully created XTS object:")
 print(head(portfolios_xts))
 
 
-# 2. Calculate Sharpe Ratios and Max Drawdowns (this part is unchanged)
+# 2. Calculate Sharpe Ratios and Max Drawdowns
 sharpe_ratios <- PerformanceAnalytics::SharpeRatio.annualized(portfolios_xts, scale = 12)
 max_drawdowns <- PerformanceAnalytics::maxDrawdown(portfolios_xts)
 
 # 3. Run regressions for Alphas
-# We use coeftest for robust (HAC) standard errors
-model_capm_orig <- lm(mkt_excess_orig ~ mkt_excess_orig, data = portfolios_final) # Just for consistency, alpha is 0
 model_capm_man <- lm(mkt_excess_managed ~ mkt_excess_orig, data = portfolios_final)
 model_capm_factor_orig <- lm(factor_excess_orig ~ mkt_excess_orig, data = portfolios_final)
 model_capm_factor_man <- lm(factor_excess_managed ~ mkt_excess_orig, data = portfolios_final)
@@ -776,23 +770,18 @@ get_alpha_stats <- function(model) {
   # Use Newey-West (HAC) standard errors for robustness
   robust_test <- coeftest(model, vcov = vcovHAC(model))
   
-  # Get monthly, fractional alpha and its standard error
   alpha_monthly_frac <- robust_test[1, "Estimate"]
   se_monthly_frac <- robust_test[1, "Std. Error"]
   t_stat <- robust_test[1, "t value"]
   
-  # Annualize and convert to percentage
   alpha_ann_pct <- alpha_monthly_frac * 12 * 100
   
-  # Format for the table
   return(
     sprintf("%.2f%% (t=%.2f)", alpha_ann_pct, t_stat)
   )
 }
 
 # 4. Assemble the final results table
-# !! Make sure FACTOR_NAME is set from your Step 1 code !!
-# e.g., FACTOR_NAME <- "Momentum"
 results_summary <- tibble(
   Portfolio = c(
     "Market (Original)", "Market (Managed)",
@@ -829,7 +818,7 @@ final_table <- results_summary |>
   gt() |>
   tab_header(
     title = "Part 2: Volatility-Managed Portfolio Performance",
-    subtitle = paste("Market vs.", FACTOR_NAME, "| D =", D, "days")
+    subtitle = paste("Market vs.", str_to_title(FACTOR_NAME), "| D =", D, "days")
   ) |>
   cols_align(align = "center", columns = -Portfolio) |>
   cols_label(
@@ -865,7 +854,7 @@ scatter_p2_factor <- ggplot(portfolios_final, aes(x = factor_excess_orig, y = fa
   geom_point(alpha = 0.4, color = "darkgreen") +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
   labs(
-    title = paste("Part 2: Managed", FACTOR_NAME, "vs. Original Factor"),
+    title = paste("Part 2: Managed", str_to_title(FACTOR_NAME), "vs. Original Factor"),
     x = "Original Factor Excess Return",
     y = "Managed Factor Return"
   ) +
@@ -939,7 +928,7 @@ density_data_p2 <- portfolios_final %>%
     # Separate the portfolio (Mkt vs. Factor) from the type (Orig vs. Managed)
     Portfolio = case_when(
       grepl("mkt_", portfolio_key) ~ "Market",
-      grepl("factor_", portfolio_key) ~ paste(FACTOR_NAME, "Factor")
+      grepl("factor_", portfolio_key) ~ paste(str_to_title(FACTOR_NAME), "Factor")
     ),
     Type = case_when(
       grepl("_orig", portfolio_key) ~ "Original",
