@@ -994,13 +994,10 @@ density_data_p2 <- portfolios_final %>%
 
 # Plot the Part 2 densities using facets
 density_plot_p2 <- ggplot(density_data_p2, 
-                          # --- MODIFIED ---
-                          # Map fill to the new 4-level variable
+
                           aes(x = returns, fill = portfolio_fill)) +
   geom_density(alpha = 0.5) +
   
-  # Use facets to create separate plots for Market and Factor
-  # This now works with the 4-level fill!
   facet_wrap(~ Portfolio, scales = "free") + 
 
   scale_fill_manual(values = my_4_colors) +
@@ -1011,7 +1008,6 @@ density_plot_p2 <- ggplot(density_data_p2,
     subtitle = "Volatility management reduces tail risk in both portfolios.",
     x = "Monthly Excess Return",
     y = "Density",
-    # --- MODIFIED ---
     fill = "Portfolio" # Changed label
   ) +
   theme_minimal() +
@@ -1019,7 +1015,94 @@ density_plot_p2 <- ggplot(density_data_p2,
 
 print(density_plot_p2)
 
+# --- Part 2: Density Plots (Extended Sample) ---
 
+# Define the custom 4-color vector
+my_4_colors <- c(
+  "Market (Original)" = "black",
+  "Market (Managed)" = "#80bef1",
+  "Momentum Factor (Original)" = "black",
+  "Momentum Factor (Managed)" = "green4"
+)
+
+# First, pivot the Part 2 data to a long format
+density_data_p2 <- portfolios_final %>%
+  select(mkt_excess_orig, mkt_excess_managed, 
+         factor_excess_orig, factor_excess_managed) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "portfolio_key",
+    values_to = "returns"
+  ) %>%
+  mutate(
+    # Separate the portfolio (Mkt vs. Factor) from the type (Orig vs. Managed)
+    Portfolio = case_when(
+      grepl("mkt_", portfolio_key) ~ "Market",
+      # Use str_to_title() on FACTOR_NAME to ensure "Momentum Factor"
+      grepl("factor_", portfolio_key) ~ paste(str_to_title(FACTOR_NAME), "Factor")
+    ),
+    Type = case_when(
+      grepl("_orig", portfolio_key) ~ "Original",
+      grepl("_managed", portfolio_key) ~ "Managed"
+    ),
+    
+    # --- NEW COLUMN ---
+    # Create the combined column for the fill aesthetic
+    portfolio_fill = paste(Portfolio, Type, sep=" (") %>% paste0(")"),
+    
+    # --- NEW FACTOR ORDERING ---
+    # Set the order to match the new color vector
+    portfolio_fill = factor(portfolio_fill, levels = c(
+      "Market (Original)",
+      "Market (Managed)",
+      "Momentum Factor (Original)",
+      "Momentum Factor (Managed)"
+    ))
+  )
+
+# --- NEW: Create PLOT 1 (Market Only) ---
+density_plot_p2_mkt <- density_data_p2 %>%
+  filter(Portfolio == "Market") %>%
+  ggplot(aes(x = returns, fill = portfolio_fill)) +
+  geom_density(alpha = 0.5) +
+  
+  # Use the full color vector; ggplot will pick the correct ones
+  scale_fill_manual(values = my_4_colors) + 
+  
+  scale_x_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Return Distribution: Market (Extended Sample)",
+    subtitle = "Volatility management reduces tail risk.",
+    x = "Monthly Excess Return",
+    y = "Density",
+    fill = "Portfolio"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# --- NEW: Create PLOT 2 (Momentum Only) ---
+density_plot_p2_factor <- density_data_p2 %>%
+  filter(Portfolio == "Momentum Factor") %>%
+  ggplot(aes(x = returns, fill = portfolio_fill)) +
+  geom_density(alpha = 0.5) +
+  
+  # Use the full color vector; ggplot will pick the correct ones
+  scale_fill_manual(values = my_4_colors) + 
+  
+  scale_x_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Return Distribution: Momentum Factor (Extended Sample)",
+    subtitle = "Volatility management dramatically tames crash risk.",
+    x = "Monthly Excess Return",
+    y = "Density",
+    fill = "Portfolio"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# --- NEW: Print both plots ---
+print(density_plot_p2_mkt)
+print(density_plot_p2_factor)
 # CUMULATIVE RETURN PLOT
 
 
