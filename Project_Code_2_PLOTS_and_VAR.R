@@ -27,6 +27,9 @@ invisible(lapply(all_packages, library, character.only = TRUE))
 # setwd(dirname(current_path))
 # print(getwd())
 
+# Load theme returns and NBER Recession Dates from RData
+load("data.RData")
+
 ############################ PART 1.  ##########################################
 
 # --- 3. Load and Prepare Fama-French Data ---
@@ -128,8 +131,6 @@ print(table(factors_vol_managed$var_quintile_labeled))
 ### STEP 4: Reproduce Figures and Tables ###
 
 # --- 4.A: Load NBER Recession Data ---
-nber_data_raw <- read_csv("USREC.csv")
-
 nber_data <- nber_data_raw %>%
   mutate(
     date = ymd(observation_date), 
@@ -505,11 +506,6 @@ factors_ff3_monthly_part_2 <- factors_ff3_daily_part_2 |>
   arrange(date) |>
   select(date, mkt_excess_var, smb_var, hml_var)
 
-
-
-
-# Load theme returns from RData
-load("data.RData")
 
 # types of locations in location column in the data:
 unique(all_themes_monthly_vw_cap$location)
