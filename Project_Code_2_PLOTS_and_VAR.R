@@ -219,8 +219,109 @@ p4_orig <- ggplot(quintile_summary, aes(x = var_quintile_labeled, y = prob_reces
 # --- Combine all 4 plots using patchwork ---
 figure_1_replication <- (p1_orig + p2_orig) / (p3_orig + p4_orig)
 
+
 # Print the replicated Figure 1
 print(figure_1_replication)
+
+
+
+
+# --- 4.C: Create Bar Charts ---
+
+# Plot 1: Average Monthly Return (Annualized)
+p1_data <- quintile_summary |>
+  select(var_quintile_labeled, mean_ret_orig_ann, mean_ret_man_ann) |>
+  pivot_longer(
+    cols = -var_quintile_labeled,
+    names_to = "portfolio",
+    values_to = "return",
+    names_prefix = "mean_ret_"
+  ) |>
+  mutate(portfolio = if_else(portfolio == "orig_ann", "Original", "Managed"))
+
+p1 <- ggplot(p1_data, aes(x = var_quintile_labeled, y = return, fill = portfolio)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "1. Average Monthly Return (Annualized)",
+    x = "Variance Quintile",
+    y = "Annualized Return",
+    fill = "Portfolio"
+  ) +
+  theme_minimal()
+
+# Plot 2: Standard Deviation of Returns (Annualized)
+p2_data <- quintile_summary |>
+  select(var_quintile_labeled, sd_ret_orig_ann, sd_ret_man_ann) |>
+  pivot_longer(
+    cols = -var_quintile_labeled,
+    names_to = "portfolio",
+    values_to = "std_dev",
+    names_prefix = "sd_ret_"
+  ) |>
+  mutate(portfolio = if_else(portfolio == "orig_ann", "Original", "Managed"))
+
+p2 <- ggplot(p2_data, aes(x = var_quintile_labeled, y = std_dev, fill = portfolio)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "2. Standard Deviation of Returns (Annualized)",
+    x = "Variance Quintile",
+    y = "Annualized Std. Dev.",
+    fill = "Portfolio"
+  ) +
+  theme_minimal()
+
+# Plot 3: Ratio E[R]/Var(R)
+p3_data <- quintile_summary |>
+  select(var_quintile_labeled, mean_var_orig, mean_var_man) |>
+  pivot_longer(
+    cols = -var_quintile_labeled,
+    names_to = "portfolio",
+    values_to = "ratio",
+    names_prefix = "mean_var_"
+  ) |>
+  mutate(portfolio = if_else(portfolio == "orig", "Original", "Managed"))
+
+p3 <- ggplot(p3_data, aes(x = var_quintile_labeled, y = ratio, fill = portfolio)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.01)) +
+  labs(
+    title = "3. Ratio E[R] / Var(R)",
+    x = "Variance Quintile",
+    y = "Ratio (Monthly)",
+    fill = "Portfolio"
+  ) +
+  theme_minimal()
+
+# Plot 4: Probability of being in a Recession
+p4 <- ggplot(quintile_summary, aes(x = var_quintile_labeled, y = prob_recession)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "4. Probability of being in a Recession",
+    x = "Variance Quintile",
+    y = "Probability"
+  ) +
+  theme_minimal()
+
+# --- Combine all 4 plots using patchwork ---
+# (p1 + p2) creates the top row
+# (p3 + p4) creates the bottom row
+# / combines the rows
+# plot_layout(guides = "collect") creates a single shared legend
+
+combined_plot <- (p1 + p2) / (p3 + p4) + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "bottom") # Place shared legend at the bottom
+
+# Print the combined plot
+print(combined_plot)
+
+
+
+
+
 
 # --- 4.D: Table I (Panel A, Column 1) ---
 # 1. Run the model
