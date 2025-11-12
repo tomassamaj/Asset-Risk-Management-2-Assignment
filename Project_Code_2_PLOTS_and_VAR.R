@@ -564,7 +564,7 @@ all_themes_monthly_vw_cap_wide_usa <- all_themes_monthly_vw_cap %>%
 # types of locations in location column in the data:
 unique(all_themes_daily_vw_cap$location)
 
-# --- USER INSTRUCTION: Filtering for 'usa' as requested ---
+# usa has the total number of observations
 all_themes_daily_vw_cap_wide_usa <- all_themes_daily_vw_cap %>%
   mutate(date = ymd(date)) %>%
   filter(
@@ -619,37 +619,66 @@ factor_daily_ext <- all_themes_daily_vw_cap_wide_usa |>
 daily_data <- inner_join(mkt_daily_ext, factor_daily_ext, by = "date")
 
 # --- Part 2: Step 1 ---
-# 4. Calculate D-day rolling variance
-# We use the tidyquant::tq_mutate wrapper for zoo::rollapply
+
+# Define the custom variance function to match the assignment's formula:
+# formula: sigma_hat^2 = (D/22) * Sum_of_Squared_Deviations
+# 
+calculate_assignment_var <- function(daily_returns_window) {
+  
+  # D_global is the target window size (e.g., 18), defined earlier in your script
+  D_global <- D 
+  
+  # Get the number of non-missing observations in the current window
+  n_valid_obs <- sum(!is.na(daily_returns_window))
+  
+  # We need at least 2 observations to calculate variance
+  if (n_valid_obs < 2) {
+    return(NA_real_)
+  }
+  
+  # 1. Calculate the sample variance (s^2) using R's built-in function
+  # s^2 = Sum_of_Squared_Deviations / (n - 1)
+  s2 <- var(daily_returns_window, na.rm = TRUE)
+  
+  # 2. Back out the Sum of Squared Deviations (SSD)
+  # SSD = s^2 * (n - 1)
+  sum_sq_dev <- s2 * (n_valid_obs - 1)
+  
+  # 3. Apply the assignment's full formula: (D/22) * SSD
+  # The scaling factor (D/22) uses the *target* window size, D_global
+  assignment_var <- (D_global / 22) * sum_sq_dev
+  
+  return(assignment_var)
+}
+
+
+# 4. Calculate D-day rolling variance *using the assignment's formula*
 daily_data_with_var <- daily_data |>
   arrange(date) |> # Make sure data is sorted for rolling functions
   tq_mutate(
     select = mkt_excess,
     mutate_fun = rollapply,
     width = D,
-    FUN = var, # Calculate rolling variance
+    # Apply our new custom function
+    FUN = calculate_assignment_var, 
     align = "right",
     fill = NA,
-    col_rename = "mkt_roll_var_base"
+    # Name the final column directly
+    col_rename = "mkt_d_day_var" 
   ) |>
   tq_mutate(
     select = factor_excess,
     mutate_fun = rollapply,
     width = D,
-    FUN = var,
+    # Apply our new custom function
+    FUN = calculate_assignment_var,
     align = "right",
     fill = NA,
-    col_rename = "factor_roll_var_base"
+    # Name the final column directly
+    col_rename = "factor_d_day_var"
   ) |>
-  mutate(
-    # !!! MODIFICATION AS REQUESTED !!!
-    # Using "simple variance" by removing the complex scaling formula.
-    # The D-day variance is now just the simple rolling variance.
-    mkt_d_day_var = mkt_roll_var_base,
-    factor_d_day_var = factor_roll_var_base
-    # !!! END MODIFICATION !!!
-  ) |>
-  filter(!is.na(mkt_d_day_var)) # Remove initial NA rows
+  # This filter now correctly uses the calculated variance
+  filter(!is.na(mkt_d_day_var) & !is.na(factor_d_day_var))
 
 # 5. Get end-of-month variance to match with next month's return
 variance_monthly_lag <- daily_data_with_var |>
@@ -873,9 +902,7 @@ print(scatter_plots_p2)
 
 
 
-# --- 6. ADDITIONAL REQUEST: DENSITY PLOTS ---
-
-cat("\nGenerating density plots...\n")
+# DENSITY PLOTS 
 
 # --- Part 1: Density Plot (1926-2015) ---
 
@@ -922,6 +949,14 @@ print(density_plot_p1)
 
 # --- Part 2: Density Plots (Extended Sample) ---
 
+# Define the custom 4-color vector
+my_4_colors <- c(
+  "Market (Original)" = "black",
+  "Market (Managed)" = "#80bef1",
+  "Momentum Factor (Original)" = "black",
+  "Momentum Factor (Managed)" = "green4"
+)
+
 # First, pivot the Part 2 data to a long format
 density_data_p2 <- portfolios_final %>%
   select(mkt_excess_orig, mkt_excess_managed, 
@@ -935,35 +970,122 @@ density_data_p2 <- portfolios_final %>%
     # Separate the portfolio (Mkt vs. Factor) from the type (Orig vs. Managed)
     Portfolio = case_when(
       grepl("mkt_", portfolio_key) ~ "Market",
+      # Use str_to_title() on FACTOR_NAME to ensure "Momentum Factor"
       grepl("factor_", portfolio_key) ~ paste(str_to_title(FACTOR_NAME), "Factor")
     ),
     Type = case_when(
       grepl("_orig", portfolio_key) ~ "Original",
       grepl("_managed", portfolio_key) ~ "Managed"
-    )
+    ),
+    
+    # --- NEW COLUMN ---
+    # Create the combined column for the fill aesthetic
+    portfolio_fill = paste(Portfolio, Type, sep=" (") %>% paste0(")"),
+    
+    # --- NEW FACTOR ORDERING ---
+    # Set the order to match the new color vector
+    portfolio_fill = factor(portfolio_fill, levels = c(
+      "Market (Original)",
+      "Market (Managed)",
+      "Momentum Factor (Original)",
+      "Momentum Factor (Managed)"
+    ))
   )
 
 # Plot the Part 2 densities using facets
 density_plot_p2 <- ggplot(density_data_p2, 
-                          aes(x = returns, fill = Type)) +
+                          # --- MODIFIED ---
+                          # Map fill to the new 4-level variable
+                          aes(x = returns, fill = portfolio_fill)) +
   geom_density(alpha = 0.5) +
   
   # Use facets to create separate plots for Market and Factor
+  # This now works with the 4-level fill!
   facet_wrap(~ Portfolio, scales = "free") + 
-  
-  # --- ADD THIS LINE to apply your custom colors ---
-  scale_fill_manual(values = my_colors) +
+
+  scale_fill_manual(values = my_4_colors) +
   
   scale_x_continuous(labels = scales::percent_format()) +
   labs(
-    title = "Part 2: Return Distributions (Extended Sample)",
+    title = "Return Distributions (Extended Sample)",
     subtitle = "Volatility management reduces tail risk in both portfolios.",
     x = "Monthly Excess Return",
     y = "Density",
-    fill = "Portfolio Type"
+    # --- MODIFIED ---
+    fill = "Portfolio" # Changed label
   ) +
   theme_minimal() +
   theme(legend.position = "bottom")
 
 print(density_plot_p2)
+
+
+# CUMULATIVE RETURN PLOT
+
+
+# 1. Prepare data for cumulative plotting
+plot_data_cumulative <- portfolios_final %>%
+  select(date, 
+         `Market (Original)` = mkt_excess_orig, 
+         `Market (Managed)` = mkt_excess_managed,
+         `Momentum (Original)` = factor_excess_orig,
+         `Momentum (Managed)` = factor_excess_managed
+  ) %>%
+  
+  # 2. Pivot to long format for ggplot
+  pivot_longer(
+    cols = -date,
+    names_to = "portfolio",
+    values_to = "returns"
+  ) %>%
+  
+  # 3. Calculate cumulative (geometric) returns
+  group_by(portfolio) %>%
+  mutate(
+    # We add 1 to plot cumulative wealth, starting at 1
+    cumulative_return = cumprod(1 + returns) 
+  ) %>%
+  ungroup() %>%
+  
+  # 4. Set portfolio as a factor for correct legend ordering
+  mutate(
+    portfolio = factor(portfolio, levels = c(
+      "Market (Original)", "Market (Managed)", 
+      "Momentum (Original)", "Momentum (Managed)"
+    ))
+  )
+
+# 5. Create the plot
+cumulative_plot <- ggplot(plot_data_cumulative, 
+                          aes(x = date, 
+                              y = cumulative_return, 
+                              color = portfolio)) +
+  geom_line(linewidth=1) +
+  
+  # log scale for the y-axis
+  scale_y_log10(
+    labels = scales::dollar_format(prefix = "", suffix = "x") 
+  ) +
+  
+  # Define custom colors for clarity
+  scale_color_manual(values = c(
+    "Market (Original)" = "darkblue",
+    "Market (Managed)" = "#80bef1",
+    "Momentum (Original)" = "darkgreen",
+    "Momentum (Managed)" = "green4"
+  )) +
+  
+  labs(
+    title = "Cumulative Excess Returns (1926 - 2025)",
+    subtitle = "Volatility-Managed vs. Original Portfolios (Log Scale)",
+    x = "Date",
+    y = "Cumulative Return (Log Scale)",
+    color = "Portfolio"
+  ) +
+  
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# 6. Print the final plot
+print(cumulative_plot)
 
