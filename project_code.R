@@ -60,7 +60,8 @@ data_monthly <- factors_ff3_daily |>
     date = max(date), # Use end-of-month date
     
     # --- From Step 1 ---
-    mkt_excess_var = sum((mkt_excess - mean(mkt_excess))^2),
+    #mkt_excess_var = sum((mkt_excess - mean(mkt_excess))^2),
+    mkt_excess_var = var(mkt_excess), # Alternative 2
     smb_var = sum((smb - mean(smb))^2),
     hml_var = sum((hml - mean(hml))^2),
     n_days = n(),
@@ -68,8 +69,8 @@ data_monthly <- factors_ff3_daily |>
     # --- From Step 2a ---
     mkt_return_comp = prod(1 + mkt_return_daily) - 1,
     rf_comp = prod(1 + rf) - 1,
-    mkt_excess_orig = mkt_return_comp - rf_comp,
-    
+    #mkt_excess_orig = mkt_return_comp - rf_comp,
+    mkt_excess_orig = prod(1+(mkt_return_daily-rf))-1, # Alternative 2
     .groups = "drop"
   ) |>
   select(-year_month) # Clean up grouping column
