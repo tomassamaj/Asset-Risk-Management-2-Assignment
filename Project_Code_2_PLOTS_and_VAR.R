@@ -151,8 +151,9 @@ print(table(factors_vol_managed$var_quintile_labeled))
 ### STEP 4: Reproduce Figures and Tables ###
 
 # --- 4.A: Load NBER Recession Data ---
-# Load the local USREC.csv file for recession shading
-nber_data_raw <- read_csv("USREC.csv")
+# Load theme returns from RData
+load("data.RData")
+
 
 # Clean up the NBER data
 nber_data <- nber_data_raw %>%
@@ -519,7 +520,7 @@ factors_ff3_monthly_part_2 <- factors_ff3_daily_part_2 |>
   summarize(
     date = max(date),
     
-    # !!! MODIFICATION AS REQUESTED !!!
+# caution: simple variance to replicate plot
     # Using simple var() as in Part 1
     mkt_excess_var = var(mkt_excess, na.rm = TRUE),
     smb_var = var(smb, na.rm = TRUE),
@@ -533,9 +534,6 @@ factors_ff3_monthly_part_2 <- factors_ff3_daily_part_2 |>
 
 
 
-
-# Load theme returns from RData
-load("data.RData")
 
 # types of locations in location column in the data:
 unique(all_themes_monthly_vw_cap$location)
