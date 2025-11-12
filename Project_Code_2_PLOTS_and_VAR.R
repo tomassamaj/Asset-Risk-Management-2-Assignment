@@ -256,6 +256,9 @@ print(figure_1_replication)
 # --- 4.C: Create Bar Charts (Comparison) ---
 # This is the *comparison* plot block (Original vs. Managed)
 
+# Define the custom colors
+my_colors <- c("Original" = "darkblue", "Managed" = "#80bef1")
+
 # Plot 1: Average Monthly Return (Annualized)
 p1_data <- quintile_summary |>
   select(var_quintile_labeled, mean_ret_orig_ann, mean_ret_man_ann) |>
@@ -270,13 +273,15 @@ p1_data <- quintile_summary |>
 p1 <- ggplot(p1_data, aes(x = var_quintile_labeled, y = return, fill = portfolio)) +
   geom_bar(stat = "identity", position = "dodge") +
   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_manual(values = my_colors) + # <-- ADDED THIS LINE
   labs(
-    title = "1. Average Monthly Return (Annualized)",
+    title = "Average Return",
     x = "Variance Quintile",
     y = "Annualized Return",
     fill = "Portfolio"
   ) +
-  theme_minimal()
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank())
 
 # Plot 2: Standard Deviation of Returns (Annualized)
 p2_data <- quintile_summary |>
@@ -292,13 +297,15 @@ p2_data <- quintile_summary |>
 p2 <- ggplot(p2_data, aes(x = var_quintile_labeled, y = std_dev, fill = portfolio)) +
   geom_bar(stat = "identity", position = "dodge") +
   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_manual(values = my_colors) + # <-- ADDED THIS LINE
   labs(
-    title = "2. Standard Deviation of Returns (Annualized)",
+    title = "Standard Deviation",
     x = "Variance Quintile",
     y = "Annualized Std. Dev.",
     fill = "Portfolio"
   ) +
-  theme_minimal()
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank())
 
 # Plot 3: Ratio E[R]/Var(R)
 p3_data <- quintile_summary |>
@@ -314,34 +321,32 @@ p3_data <- quintile_summary |>
 p3 <- ggplot(p3_data, aes(x = var_quintile_labeled, y = ratio, fill = portfolio)) +
   geom_bar(stat = "identity", position = "dodge") +
   scale_y_continuous(labels = scales::number_format(accuracy = 0.01)) +
+  scale_fill_manual(values = my_colors) + # <-- ADDED THIS LINE
   labs(
-    title = "3. Ratio E[R] / Var(R)",
+    title = "E[R] / Var(R)",
     x = "Variance Quintile",
     y = "Ratio (Monthly)",
     fill = "Portfolio"
   ) +
-  theme_minimal()
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank())
 
 # Plot 4: Probability of being in a Recession
 p4 <- ggplot(quintile_summary, aes(x = var_quintile_labeled, y = prob_recession)) +
-  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_bar(stat = "identity", fill = "darkblue") +
   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
   labs(
-    title = "4. Probability of being in a Recession",
+    title = "Probability of Recession",
     x = "Variance Quintile",
     y = "Probability"
   ) +
-  theme_minimal()
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank())
 
 # --- Combine all 4 plots using patchwork ---
-# (p1 + p2) creates the top row
-# (p3 + p4) creates the bottom row
-# / combines the rows
-# plot_layout(guides = "collect") creates a single shared legend
-
 combined_plot <- (p1 + p2) / (p3 + p4) + 
   plot_layout(guides = "collect") & 
-  theme(legend.position = "bottom") # Place shared legend at the bottom
+  theme(legend.position = "bottom") 
 
 # Print the combined plot
 print(combined_plot)
