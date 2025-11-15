@@ -11,7 +11,10 @@ all_packages <- c(
   "patchwork",
   "lmtest",
   "sandwich",
-  "gt"
+  "gt",
+  "PerformanceAnalytics",
+  "xts",
+  "zoo"
 )
 
 # Set the CRAN mirror
