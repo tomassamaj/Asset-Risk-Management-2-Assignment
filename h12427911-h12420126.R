@@ -152,7 +152,7 @@ print(table(factors_vol_managed$var_quintile_labeled))
 
 # --- 4.A: Load NBER Recession Data ---
 # Load theme returns from RData
-load("data.RData")
+load("h12427911-h12420126.RData")
 
 
 # Clean up the NBER data
